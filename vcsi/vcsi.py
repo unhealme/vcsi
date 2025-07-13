@@ -1,33 +1,27 @@
-#!/usr/bin/env python3
-
 """Create a video contact sheet."""
 
-from __future__ import print_function
+__author__ = "Nils Amiet"
 
+
+import argparse
+import configparser
 import datetime
+import json
+import math
 import os
 import shutil
 import subprocess
 import sys
-from argparse import ArgumentTypeError
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
-from typing import Iterable, List
-from urllib.parse import urlparse
-
-try:
-    from subprocess import DEVNULL
-except ImportError:
-    DEVNULL = open(os.devnull, "wb")
-import argparse
-import configparser
-import json
-import math
 import tempfile
 import textwrap
+from argparse import ArgumentTypeError
 from collections import namedtuple
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from enum import Enum
 from glob import escape, glob
+from typing import Iterable, List
+from urllib.parse import urlparse
 
 import numpy
 import parsedatetime
@@ -35,12 +29,14 @@ import texttable
 from jinja2 import Template
 from PIL import Image, ImageDraw, ImageFont
 
-here = os.path.abspath(os.path.dirname(__file__))
+from . import __version__
 
-with open(os.path.join(here, "VERSION")) as f:
-    VERSION = f.readline().strip()
-__version__ = VERSION
-__author__ = "Nils Amiet"
+try:
+    DEVNULL = subprocess.DEVNULL
+except AttributeError:
+    DEVNULL = open(os.devnull, "wb")
+
+here = os.path.abspath(os.path.dirname(__file__))
 
 
 class Grid(namedtuple("Grid", ["x", "y"])):
@@ -2082,7 +2078,3 @@ def process_file(path, args):
 
     if not is_save_successful:
         error_exit("Unsupported image format: %s." % (args.image_format,))
-
-
-if __name__ == "__main__":
-    main()
