@@ -258,9 +258,14 @@ class MediaInfo(object):
         try:
             rotation = int(self.video_stream["tags"]["rotate"])
         except KeyError:
-            rotation = None
+            try:
+                rotation = int(
+                    next(x["rotation"] for x in self.video_stream["side_data_list"])
+                )
+            except (KeyError, StopIteration):
+                rotation = 0
 
-        if rotation in [90, 270]:
+        if abs(rotation) in [90, 270]:
             # swap width and height
             self.sample_width, self.sample_height = self.sample_height, self.sample_width
 
