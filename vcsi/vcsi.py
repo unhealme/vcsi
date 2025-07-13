@@ -259,24 +259,14 @@ class MediaInfo(object):
             # Try to get rotation from the original key
             rotation = int(self.video_stream["tags"]["rotate"])
         except KeyError:
-            # If the original key is not present, check the  key for newer iPhones 14+ (iOS 17+)
-            side_data_list = self.video_stream.get("side_data_list", [])
-            rotation = None
+            try:
+                rotation = int(
+                    next(x["rotation"] for x in self.video_stream["side_data_list"])
+                )
+            except (KeyError, StopIteration):
+                rotation = 0
 
-            for side_data in side_data_list:
-                if side_data.get("side_data_type") == "Display Matrix":
-                    # Extract rotation value
-                    rotation_value = side_data.get("rotation")
-                    if rotation_value is not None:
-                        # Normalize the rotation value to ensure it is either 90, 180, 270, or None
-                        rotation = int(rotation_value) % 360
-                        if rotation < 0:
-                            rotation += 360
-                        if rotation not in [0, 90, 180, 270]:
-                            rotation = None
-                        break
-
-        if rotation in [90, 270]:
+        if abs(rotation) in [90, 270]:
             # swap width and height
             self.sample_width, self.sample_height = self.sample_height, self.sample_width
 
