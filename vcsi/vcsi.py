@@ -7,11 +7,11 @@ import argparse
 import configparser
 import datetime
 import json
+import logging
 import math
 import os
 import shutil
 import subprocess
-import sys
 import tempfile
 import textwrap
 from argparse import ArgumentTypeError
@@ -36,7 +36,7 @@ try:
 except AttributeError:
     DEVNULL = open(os.devnull, "wb")
 
-here = os.path.abspath(os.path.dirname(__file__))
+logger = logging.getLogger(__name__)
 
 
 class Grid(namedtuple("Grid", ["x", "y"])):
@@ -184,20 +184,23 @@ class Config:
 class MediaInfo(object):
     """Collect information about a video file"""
 
-    def __init__(self, path, verbose=False):
+    def __init__(self, path):
         self.probe_media(path)
         self.find_video_stream()
         self.find_audio_stream()
         self.compute_display_resolution()
         self.compute_format()
         self.parse_attributes()
-
-        if verbose:
-            print(self.filename)
-            print("%sx%s" % (self.sample_width, self.sample_height))
-            print("%sx%s" % (self.display_width, self.display_height))
-            print(self.duration)
-            print(self.size)
+        logger.debug(
+            "filename=%s, sample=%sx%x, display=%sx%x, duration=%s, size=%s",
+            self.filename,
+            self.sample_width,
+            self.sample_height,
+            self.display_width,
+            self.display_height,
+            self.duration,
+            self.size,
+        )
 
     def probe_media(self, path):
         """Probe video file using ffprobe"""
@@ -206,7 +209,7 @@ class MediaInfo(object):
             "-v",
             "quiet",
             "-print_format",
-            "json",
+            "json=c=1",
             "-show_format",
             "-show_streams",
             "--",
@@ -218,7 +221,8 @@ class MediaInfo(object):
             self.ffprobe_dict = json.loads(output.decode("utf-8"))
         except FileNotFoundError:
             error = "Could not find 'ffprobe' executable. Please make sure ffmpeg/ffprobe is installed and is in your PATH."
-            error_exit(error)
+            logger.exception(error)
+            exit(1)
 
     def human_readable_size(self, num, suffix="B"):
         """Converts a number of bytes to a human readable format"""
@@ -235,7 +239,7 @@ class MediaInfo(object):
                 if stream["codec_type"] == "video":
                     self.video_stream = stream
                     break
-            except:
+            except Exception:
                 pass
 
     def find_audio_stream(self):
@@ -245,7 +249,7 @@ class MediaInfo(object):
                 if stream["codec_type"] == "audio":
                     self.audio_stream = stream
                     break
-            except:
+            except Exception:
                 pass
 
     def compute_display_resolution(self):
@@ -468,10 +472,10 @@ class MediaInfo(object):
 
     def template_attributes(self):
         """Returns the template attributes and values ready for use in the metadata header"""
-        return dict(
-            (x["name"], getattr(self, x["name"]))
+        return {
+            x["name"]: getattr(self, x["name"])
             for x in MediaInfo.list_template_attributes()
-        )
+        }
 
     @staticmethod
     def list_template_attributes():
@@ -695,7 +699,8 @@ class MediaCapture(object):
             )
         except FileNotFoundError:
             error = "Could not find 'ffmpeg' executable. Please make sure ffmpeg/ffprobe is installed and is in your PATH."
-            error_exit(error)
+            logger.exception(error)
+            exit(1)
 
     def compute_avg_color(self, image_path):
         """Computes the average color of an image"""
@@ -935,10 +940,10 @@ def best(captures: Frame):
     return sorted(captures, key=lambda x: x.blurriness)[0]
 
 
-def chunks(l, n):
-    """Yield successive n-sized chunks from l."""
-    for i in range(0, len(l), n):
-        yield l[i : i + n]
+def chunks(i, n):
+    """Yield successive n-sized chunks from i."""
+    for x in range(0, len(i), n):
+        yield i[x : x + n]
 
 
 def draw_metadata(
@@ -1084,28 +1089,26 @@ def compute_timestamp_position(
     return upper_left, bottom_right
 
 
-def load_font(args, font_path, font_size, default_font_path):
+def load_font(font_path, font_size, default_font_path):
     """Loads given font and defaults to fallback fonts if that fails."""
-    if args.is_verbose:
-        print("Loading font...")
+    logger.debug("Loading font...")
 
     fonts = [font_path] + FALLBACK_FONTS
     if font_path == default_font_path:
         for font in fonts:
-            if args.is_verbose:
-                print("Trying to load font:", font)
-            if os.path.exists(font):
-                try:
-                    return ImageFont.truetype(font, font_size)
-                except OSError:
-                    pass
-        print("Falling back to default font.")
+            logger.debug("Trying to load font: %s", font)
+            try:
+                return ImageFont.truetype(font, font_size)
+            except OSError:
+                logger.debug("Cannot load font: %s", font)
+        logger.info("Falling back to default font.")
         return ImageFont.load_default()
     else:
         try:
             return ImageFont.truetype(font_path, font_size)
         except OSError:
-            error_exit("Cannot load font: {}".format(font_path))
+            logger.exception("Cannot load font: %s", font_path)
+            exit(1)
 
 
 def compose_contact_sheet(media_info, frames, args):
@@ -1128,10 +1131,10 @@ def compose_contact_sheet(media_info, frames, args):
     )
 
     header_font = load_font(
-        args, args.metadata_font, args.metadata_font_size, Config.metadata_font
+        args.metadata_font, args.metadata_font_size, Config.metadata_font
     )
     timestamp_font = load_font(
-        args, args.timestamp_font, args.timestamp_font_size, Config.timestamp_font
+        args.timestamp_font, args.timestamp_font_size, Config.timestamp_font
     )
 
     header_lines = prepare_metadata_text_lines(
@@ -1327,19 +1330,15 @@ def save_image(args, image, media_info, output_path):
         return False
 
 
-def cleanup(frames, args):
+def cleanup(frames):
     """Delete temporary captures"""
-    if args.is_verbose:
-        print("Deleting {} temporary frames...".format(len(frames)))
+    logger.debug("Deleting %s temporary frames...", len(frames))
     for frame in frames:
         try:
-            if args.is_verbose:
-                print("Deleting {} ...".format(frame.filename))
+            logger.debug("Deleting %s ...", frame.filename)
             os.unlink(frame.filename)
-        except Exception as e:
-            if args.is_verbose:
-                print("[Error] Failed to delete {}".format(frame.filename))
-                print(e)
+        except Exception:
+            logger.exception("Failed to delete %s", frame.filename)
 
 
 def print_template_attributes():
@@ -1400,7 +1399,7 @@ def hex_color_type(string):
             components += (255,)
         c = Color(*components)
         return c
-    except:
+    except Exception:
         error = "Color must be an hexadecimal number, for example 'AABBCC'"
         raise argparse.ArgumentTypeError(error)
 
@@ -1418,8 +1417,8 @@ def manual_timestamps(string):
             MediaInfo.pretty_to_seconds(t)
 
         return timestamps
-    except Exception as e:
-        print(e)
+    except Exception:
+        logger.exception("Unable to parse timestamps")
         error = "Manual frame timestamps must be comma-separated and of the form h:mm:ss.mmmm"
         raise argparse.ArgumentTypeError(error)
 
@@ -1462,17 +1461,6 @@ def comma_separated_string_type(string):
     return splits
 
 
-def error(message):
-    """Print an error message."""
-    print("[ERROR] %s" % (message,))
-
-
-def error_exit(message):
-    """Print an error message and exit"""
-    error(message)
-    sys.exit(-1)
-
-
 def main():
     """Program entry point"""
     # Argument parser before actual argument parser to let the user overwrite the config path
@@ -1486,13 +1474,15 @@ def main():
             if os.path.exists(preargs.configfile):
                 Config.load_configuration(preargs.configfile)
             else:
-                error_exit("Could find config file")
+                logger.error("Could find config file")
+                exit(1)
         else:
             # check if the config file exists and load it
             if os.path.exists(DEFAULT_CONFIG_FILE):
                 Config.load_configuration(DEFAULT_CONFIG_FILE)
-    except configparser.MissingSectionHeaderError as e:
-        error_exit(e.message)
+    except configparser.MissingSectionHeaderError:
+        logger.exception("Unable to load config")
+        exit(1)
 
     parser = argparse.ArgumentParser(
         description="Create a video contact sheet",
@@ -1862,7 +1852,16 @@ def main():
 
     if args.list_template_attributes:
         print_template_attributes()
-        sys.exit(0)
+        exit(0)
+
+    loghdlr = logging.StreamHandler()
+    loghdlr.setFormatter(
+        logging.Formatter(
+            r"%(asctime)s: %(module)s.%(funcName)s: %(levelname)s: %(message)s"
+        )
+    )
+    logger.addHandler(loghdlr)
+    logger.setLevel(logging.DEBUG if args.is_verbose else logging.INFO)
 
     def process_file_or_ignore(filepath, args):
         try:
@@ -1871,10 +1870,7 @@ def main():
             if not args.ignore_errors:
                 raise
             else:
-                print(
-                    "[WARN]: failed to process {} ... skipping.".format(filepath),
-                    file=sys.stderr,
-                )
+                logger.warning("failed to process %s ... skipping.", filepath)
 
     if args.recursive:
         for path in args.filenames:
@@ -1900,8 +1896,7 @@ def main():
 
 def process_file(path, args):
     """Generate a video contact sheet for the file at given path"""
-    if args.is_verbose:
-        print("Considering {}...".format(path))
+    logger.debug("Considering %s...", path)
 
     args = deepcopy(args)
 
@@ -1910,21 +1905,21 @@ def process_file(path, args):
     try:
         _, _, url_path, _, _, _ = urlparse(path)
         is_url = True
-    except ValueError(e):
+    except ValueError:
         pass
 
     if not is_url and not os.path.exists(path):
         if args.ignore_errors:
-            print("File does not exist, skipping: {}".format(path))
+            logger.warning("File does not exist, skipping: %s", path)
             return
         else:
-            error_message = "File does not exist: {}".format(path)
-            error_exit(error_message)
+            logger.error("File does not exist: %s", path)
+            exit(1)
 
     if not is_url:
         file_extension = path.lower().split(".")[-1]
         if file_extension in args.exclude_extensions:
-            print("[WARN] Excluded extension {}. Skipping.".format(file_extension))
+            logger.warning("Excluded extension %s. Skipping.", file_extension)
             return
 
     output_path = args.output_path
@@ -1940,20 +1935,19 @@ def process_file(path, args):
             output_path, os.path.basename(path) + "." + args.image_format
         )
 
-    if args.no_overwrite:
-        if os.path.exists(output_path):
-            print(
-                "[INFO] contact-sheet already exists, skipping: {}".format(output_path)
-            )
-            return
+    if args.no_overwrite and os.path.exists(output_path):
+        logger.info("contact-sheet already exists, skipping: %s", output_path)
+        return
 
-    print("Processing {}...".format(path))
+    logger.info("Processing %s...", path)
 
     if args.interval is not None and args.manual_timestamps is not None:
-        error_exit("Cannot use --interval and --manual at the same time.")
+        logger.error("Cannot use --interval and --manual at the same time.")
+        exit(1)
 
     if args.vcs_width != DEFAULT_CONTACT_SHEET_WIDTH and args.actual_size:
-        error_exit("Cannot use --width and --actual-size at the same time.")
+        logger.error("Cannot use --width and --actual-size at the same time.")
+        exit(1)
 
     if args.delay_percent is not None:
         args.start_delay_percent = args.delay_percent
@@ -1961,7 +1955,7 @@ def process_file(path, args):
 
     args.num_groups = 5
 
-    media_info = MediaInfo(path, verbose=args.is_verbose)
+    media_info = MediaInfo(path)
     media_capture = MediaCapture(
         path,
         accurate=args.is_accurate,
@@ -1979,10 +1973,10 @@ def process_file(path, args):
         and args.manual_timestamps is None
         and (args.grid.x == 0 or args.grid.y == 0)
     ):
-        error = (
+        logger.error(
             "Row or column of size zero is only supported with --interval or --manual."
         )
-        error_exit(error)
+        exit(1)
 
     if args.interval is not None:
         total_delay = total_delay_seconds(media_info, args)
@@ -2002,9 +1996,7 @@ def process_file(path, args):
     if args.interval is not None or args.manual_timestamps is not None:
         square_side = math.ceil(math.sqrt(args.num_samples))
 
-        if args.grid == DEFAULT_GRID_SIZE:
-            args.grid = Grid(square_side, square_side)
-        elif args.grid.x == 0 and args.grid.y == 0:
+        if args.grid == DEFAULT_GRID_SIZE or (args.grid.x == 0 and args.grid.y == 0):
             args.grid = Grid(square_side, square_side)
         elif args.grid.x == 0:
             # y is fixed
@@ -2048,7 +2040,7 @@ def process_file(path, args):
         media_info, media_capture, args
     )
 
-    print("Composing contact sheet...")
+    logger.info("Composing contact sheet...")
     image = compose_contact_sheet(media_info, selected_frames, args)
 
     is_save_successful = save_image(args, image, media_info, output_path)
@@ -2057,11 +2049,11 @@ def process_file(path, args):
     thumbnail_output_path = args.thumbnail_output_path
     if thumbnail_output_path is not None:
         os.makedirs(thumbnail_output_path, exist_ok=True)
-        print("Copying thumbnails to {} ...".format(thumbnail_output_path))
+        logger.info("Copying thumbnails to %s ...", thumbnail_output_path)
         for i, frame in enumerate(
             sorted(selected_frames, key=lambda x_frame: x_frame.timestamp)
         ):
-            print(frame.filename)
+            logger.info(frame.filename)
             thumbnail_file_extension = frame.filename.lower().split(".")[-1]
             thumbnail_filename = "{filename}.{number}.{extension}".format(
                 filename=os.path.basename(path),
@@ -2073,8 +2065,9 @@ def process_file(path, args):
             )
             shutil.copyfile(frame.filename, thumbnail_destination)
 
-    print("Cleaning up temporary files...")
-    cleanup(temp_frames, args)
+    logger.info("Cleaning up temporary files...")
+    cleanup(temp_frames)
 
     if not is_save_successful:
-        error_exit("Unsupported image format: %s." % (args.image_format,))
+        logger.error("Unsupported image format: %s.", args.image_format)
+        exit(1)
