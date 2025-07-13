@@ -1,3 +1,1 @@
-def main():
-    import vcsi.vcsi
-    vcsi.vcsi.main()
+__version__ = "7.0.16"
