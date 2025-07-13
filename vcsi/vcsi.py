@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
-"""Create a video contact sheet.
-"""
+"""Create a video contact sheet."""
 
 from __future__ import print_function
 
@@ -13,13 +12,13 @@ import sys
 from argparse import ArgumentTypeError
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from typing import List, Iterable
+from typing import Iterable, List
 from urllib.parse import urlparse
 
 try:
     from subprocess import DEVNULL
 except ImportError:
-    DEVNULL = open(os.devnull, 'wb')
+    DEVNULL = open(os.devnull, "wb")
 import argparse
 import configparser
 import json
@@ -28,14 +27,13 @@ import tempfile
 import textwrap
 from collections import namedtuple
 from enum import Enum
-from glob import glob
-from glob import escape
+from glob import escape, glob
 
-from PIL import Image, ImageDraw, ImageFont
 import numpy
-from jinja2 import Template
-import texttable
 import parsedatetime
+import texttable
+from jinja2 import Template
+from PIL import Image, ImageDraw, ImageFont
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -45,16 +43,16 @@ __version__ = VERSION
 __author__ = "Nils Amiet"
 
 
-class Grid(namedtuple('Grid', ['x', 'y'])):
+class Grid(namedtuple("Grid", ["x", "y"])):
     def __str__(self):
         return "%sx%s" % (self.x, self.y)
 
 
-class Frame(namedtuple('Frame', ['filename', 'blurriness', 'timestamp', 'avg_color'])):
+class Frame(namedtuple("Frame", ["filename", "blurriness", "timestamp", "avg_color"])):
     pass
 
 
-class Color(namedtuple('Color', ['r', 'g', 'b', 'a'])):
+class Color(namedtuple("Color", ["r", "g", "b", "a"])):
     def to_hex(self, component):
         h = hex(component).replace("0x", "").upper()
         return h if len(h) == 2 else "0" + h
@@ -63,7 +61,9 @@ class Color(namedtuple('Color', ['r', 'g', 'b', 'a'])):
         return "".join([self.to_hex(x) for x in [self.r, self.g, self.b, self.a]])
 
 
-TimestampPosition = Enum('TimestampPosition', "north south east west ne nw se sw center")
+TimestampPosition = Enum(
+    "TimestampPosition", "north south east west ne nw se sw center"
+)
 VALID_TIMESTAMP_POSITIONS = [x.name for x in TimestampPosition]
 
 DEFAULT_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".config/vcsi.conf")
@@ -75,17 +75,20 @@ DEFAULT_TIMESTAMP_FONT_SIZE = 12
 # Defaults
 DEFAULT_METADATA_FONT = "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
 DEFAULT_TIMESTAMP_FONT = "/usr/share/fonts/TTF/DejaVuSans.ttf"
-FALLBACK_FONTS = ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/Library/Fonts/Arial Unicode.ttf"]
+FALLBACK_FONTS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+]
 
 # Replace defaults on Windows to support unicode/CJK and multiple fallbacks
-if os.name == 'nt':
+if os.name == "nt":
     DEFAULT_METADATA_FONT = "C:/Windows/Fonts/msgothic.ttc"
     DEFAULT_TIMESTAMP_FONT = "C:/Windows/Fonts/msgothic.ttc"
     FALLBACK_FONTS = [
         "C:/Windows/Fonts/simsun.ttc",
         "C:/Windows/Fonts/Everson Mono.ttf",
         "C:/Windows/Fonts/calibri.ttf",
-        "C:/Windows/Fonts/arial.ttf"
+        "C:/Windows/Fonts/arial.ttf",
     ]
 
 DEFAULT_CONTACT_SHEET_WIDTH = 1500
@@ -162,23 +165,28 @@ class Config:
 
         for config_entry in cls.__dict__.keys():
             # skip magic attributes
-            if config_entry.startswith('__'):
+            if config_entry.startswith("__"):
                 continue
-            setattr(cls, config_entry, config.get(
-                DEFAULT_CONFIG_SECTION,
+            setattr(
+                cls,
                 config_entry,
-                fallback=getattr(cls, config_entry)
-            ))
+                config.get(
+                    DEFAULT_CONFIG_SECTION,
+                    config_entry,
+                    fallback=getattr(cls, config_entry),
+                ),
+            )
         # special cases
         # fallback_fonts is an array, it's reflected as comma separated list in config file
-        fallback_fonts = config.get(DEFAULT_CONFIG_SECTION, 'fallback_fonts', fallback=None)
+        fallback_fonts = config.get(
+            DEFAULT_CONFIG_SECTION, "fallback_fonts", fallback=None
+        )
         if fallback_fonts:
             cls.fallback_fonts = comma_separated_string_type(fallback_fonts)
 
 
 class MediaInfo(object):
-    """Collect information about a video file
-    """
+    """Collect information about a video file"""
 
     def __init__(self, path, verbose=False):
         self.probe_media(path)
@@ -196,16 +204,17 @@ class MediaInfo(object):
             print(self.size)
 
     def probe_media(self, path):
-        """Probe video file using ffprobe
-        """
+        """Probe video file using ffprobe"""
         ffprobe_command = [
             "ffprobe",
-            "-v", "quiet",
-            "-print_format", "json",
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_format",
             "-show_streams",
             "--",
-            path
+            path,
         ]
 
         try:
@@ -215,18 +224,16 @@ class MediaInfo(object):
             error = "Could not find 'ffprobe' executable. Please make sure ffmpeg/ffprobe is installed and is in your PATH."
             error_exit(error)
 
-    def human_readable_size(self, num, suffix='B'):
-        """Converts a number of bytes to a human readable format
-        """
-        for unit in ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi', 'Ei', 'Zi']:
+    def human_readable_size(self, num, suffix="B"):
+        """Converts a number of bytes to a human readable format"""
+        for unit in ["", "Ki", "Mi", "Gi", "Ti", "Pi", "Ei", "Zi"]:
             if abs(num) < 1024.0:
                 return "%3.1f %s%s" % (num, unit, suffix)
             num /= 1024.0
-        return "%.1f %s%s" % (num, 'Yi', suffix)
+        return "%.1f %s%s" % (num, "Yi", suffix)
 
     def find_video_stream(self):
-        """Find the first stream which is a video stream
-        """
+        """Find the first stream which is a video stream"""
         for stream in self.ffprobe_dict["streams"]:
             try:
                 if stream["codec_type"] == "video":
@@ -236,8 +243,7 @@ class MediaInfo(object):
                 pass
 
     def find_audio_stream(self):
-        """Find the first stream which is an audio stream
-        """
+        """Find the first stream which is an audio stream"""
         for stream in self.ffprobe_dict["streams"]:
             try:
                 if stream["codec_type"] == "audio":
@@ -267,7 +273,10 @@ class MediaInfo(object):
 
         if abs(rotation) in [90, 270]:
             # swap width and height
-            self.sample_width, self.sample_height = self.sample_height, self.sample_width
+            self.sample_width, self.sample_height = (
+                self.sample_height,
+                self.sample_width,
+            )
 
         sample_aspect_ratio = "1:1"
         try:
@@ -293,8 +302,7 @@ class MediaInfo(object):
             self.display_height = self.sample_height
 
     def compute_format(self):
-        """Compute duration, size and retrieve filename
-        """
+        """Compute duration, size and retrieve filename"""
         format_dict = self.ffprobe_dict["format"]
 
         try:
@@ -313,10 +321,8 @@ class MediaInfo(object):
         self.size = self.human_readable_size(self.size_bytes)
 
     @staticmethod
-    def pretty_to_seconds(
-            pretty_duration):
-        """Converts pretty printed timestamp to seconds
-        """
+    def pretty_to_seconds(pretty_duration):
+        """Converts pretty printed timestamp to seconds"""
         millis_split = pretty_duration.split(".")
         millis = 0
         if len(millis_split) == 2:
@@ -344,12 +350,8 @@ class MediaInfo(object):
         return result
 
     @staticmethod
-    def pretty_duration(
-            seconds,
-            show_centis=False,
-            show_millis=False):
-        """Converts seconds to a human readable time format
-        """
+    def pretty_duration(seconds, show_centis=False, show_millis=False):
+        """Converts seconds to a human readable time format"""
         hours = int(math.floor(seconds / 3600))
         remaining_seconds = seconds - 3600 * hours
 
@@ -361,12 +363,17 @@ class MediaInfo(object):
         if hours > 0:
             duration += "%s:" % (int(hours),)
 
-        duration += "%s:%s" % (str(int(minutes)).zfill(2), str(int(math.floor(remaining_seconds))).zfill(2))
+        duration += "%s:%s" % (
+            str(int(minutes)).zfill(2),
+            str(int(math.floor(remaining_seconds))).zfill(2),
+        )
 
         if show_centis or show_millis:
             coeff = 1000 if show_millis else 100
             digits = 3 if show_millis else 2
-            centis = math.floor((remaining_seconds - math.floor(remaining_seconds)) * coeff)
+            centis = math.floor(
+                (remaining_seconds - math.floor(remaining_seconds)) * coeff
+            )
             duration += ".%s" % (str(int(centis)).zfill(digits))
 
         return duration
@@ -388,7 +395,7 @@ class MediaInfo(object):
             "minutes": minutes,
             "seconds": seconds,
             "centis": centis,
-            "millis": millis
+            "millis": millis,
         }
 
     def desired_size(self, width=Config.contact_sheet_width):
@@ -400,8 +407,7 @@ class MediaInfo(object):
         return (width, desired_height)
 
     def parse_attributes(self):
-        """Parse multiple media attributes
-        """
+        """Parse multiple media attributes"""
         # video
         try:
             self.video_codec = self.video_stream["codec_name"]
@@ -465,80 +471,183 @@ class MediaInfo(object):
             self.audio_bit_rate = None
 
     def template_attributes(self):
-        """Returns the template attributes and values ready for use in the metadata header
-        """
-        return dict((x["name"], getattr(self, x["name"])) for x in MediaInfo.list_template_attributes())
+        """Returns the template attributes and values ready for use in the metadata header"""
+        return dict(
+            (x["name"], getattr(self, x["name"]))
+            for x in MediaInfo.list_template_attributes()
+        )
 
     @staticmethod
     def list_template_attributes():
-        """Returns a list a of all supported template attributes with their description and example
-        """
+        """Returns a list a of all supported template attributes with their description and example"""
         table = []
-        table.append({"name": "size", "description": "File size (pretty format)", "example": "128.3 MiB"})
-        table.append({"name": "size_bytes", "description": "File size (bytes)", "example": "4662788373"})
-        table.append({"name": "filename", "description": "File name", "example": "video.mkv"})
-        table.append({"name": "file_path", "description": "Full file path", "example": "/home/user/vids/video.mkv"})
-        table.append({"name": "duration", "description": "Duration (pretty format)", "example": "03:07"})
-        table.append({"name": "sample_width", "description": "Sample width (pixels)", "example": "1920"})
-        table.append({"name": "sample_height", "description": "Sample height (pixels)", "example": "1080"})
-        table.append({"name": "display_width", "description": "Display width (pixels)", "example": "1920"})
-        table.append({"name": "display_height", "description": "Display height (pixels)", "example": "1080"})
-        table.append({"name": "video_codec", "description": "Video codec", "example": "h264"})
-        table.append({"name": "video_codec_long", "description": "Video codec (long name)",
-                      "example": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10"})
-        table.append({"name": "video_bit_rate", "description": "Video bitrate", "example": "4000"})
-        table.append({"name": "display_aspect_ratio", "description": "Display aspect ratio", "example": "16:9"})
-        table.append({"name": "sample_aspect_ratio", "description": "Sample aspect ratio", "example": "1:1"})
-        table.append({"name": "audio_codec", "description": "Audio codec", "example": "aac"})
-        table.append({"name": "audio_codec_long", "description": "Audio codec (long name)",
-                      "example": "AAC (Advanced Audio Coding)"})
-        table.append({"name": "audio_sample_rate", "description": "Audio sample rate (Hz)", "example": "44100"})
-        table.append({"name": "audio_bit_rate", "description": "Audio bit rate (bits/s)", "example": "192000"})
-        table.append({"name": "frame_rate", "description": "Frame rate (frames/s)", "example": "23.974"})
+        table.append(
+            {
+                "name": "size",
+                "description": "File size (pretty format)",
+                "example": "128.3 MiB",
+            }
+        )
+        table.append(
+            {
+                "name": "size_bytes",
+                "description": "File size (bytes)",
+                "example": "4662788373",
+            }
+        )
+        table.append(
+            {"name": "filename", "description": "File name", "example": "video.mkv"}
+        )
+        table.append(
+            {
+                "name": "file_path",
+                "description": "Full file path",
+                "example": "/home/user/vids/video.mkv",
+            }
+        )
+        table.append(
+            {
+                "name": "duration",
+                "description": "Duration (pretty format)",
+                "example": "03:07",
+            }
+        )
+        table.append(
+            {
+                "name": "sample_width",
+                "description": "Sample width (pixels)",
+                "example": "1920",
+            }
+        )
+        table.append(
+            {
+                "name": "sample_height",
+                "description": "Sample height (pixels)",
+                "example": "1080",
+            }
+        )
+        table.append(
+            {
+                "name": "display_width",
+                "description": "Display width (pixels)",
+                "example": "1920",
+            }
+        )
+        table.append(
+            {
+                "name": "display_height",
+                "description": "Display height (pixels)",
+                "example": "1080",
+            }
+        )
+        table.append(
+            {"name": "video_codec", "description": "Video codec", "example": "h264"}
+        )
+        table.append(
+            {
+                "name": "video_codec_long",
+                "description": "Video codec (long name)",
+                "example": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+            }
+        )
+        table.append(
+            {
+                "name": "video_bit_rate",
+                "description": "Video bitrate",
+                "example": "4000",
+            }
+        )
+        table.append(
+            {
+                "name": "display_aspect_ratio",
+                "description": "Display aspect ratio",
+                "example": "16:9",
+            }
+        )
+        table.append(
+            {
+                "name": "sample_aspect_ratio",
+                "description": "Sample aspect ratio",
+                "example": "1:1",
+            }
+        )
+        table.append(
+            {"name": "audio_codec", "description": "Audio codec", "example": "aac"}
+        )
+        table.append(
+            {
+                "name": "audio_codec_long",
+                "description": "Audio codec (long name)",
+                "example": "AAC (Advanced Audio Coding)",
+            }
+        )
+        table.append(
+            {
+                "name": "audio_sample_rate",
+                "description": "Audio sample rate (Hz)",
+                "example": "44100",
+            }
+        )
+        table.append(
+            {
+                "name": "audio_bit_rate",
+                "description": "Audio bit rate (bits/s)",
+                "example": "192000",
+            }
+        )
+        table.append(
+            {
+                "name": "frame_rate",
+                "description": "Frame rate (frames/s)",
+                "example": "23.974",
+            }
+        )
         return table
 
 
 class MediaCapture(object):
-    """Capture frames of a video
-    """
+    """Capture frames of a video"""
 
-    def __init__(self, path, accurate=False, skip_delay_seconds=Config.accurate_delay_seconds,
-                 frame_type=Config.frame_type):
+    def __init__(
+        self,
+        path,
+        accurate=False,
+        skip_delay_seconds=Config.accurate_delay_seconds,
+        frame_type=Config.frame_type,
+    ):
         self.path = path
         self.accurate = accurate
         self.skip_delay_seconds = skip_delay_seconds
         self.frame_type = frame_type
 
     def make_capture(self, time, width, height, out_path="out.png"):
-        """Capture a frame at given time with given width and height using ffmpeg
-        """
-        skip_delay = MediaInfo.pretty_duration(self.skip_delay_seconds, show_millis=True)
+        """Capture a frame at given time with given width and height using ffmpeg"""
+        skip_delay = MediaInfo.pretty_duration(
+            self.skip_delay_seconds, show_millis=True
+        )
 
         ffmpeg_command = [
             "ffmpeg",
-            "-ss", time,
-            "-i", self.path,
-            "-vframes", "1",
-            "-s", "%sx%s" % (width, height),
+            "-ss",
+            time,
+            "-i",
+            self.path,
+            "-vframes",
+            "1",
+            "-s",
+            "%sx%s" % (width, height),
         ]
 
         if self.frame_type is not None:
-            select_args = [
-                "-vf", "select='eq(frame_type\\," + self.frame_type + ")'"
-            ]
+            select_args = ["-vf", "select='eq(frame_type\\," + self.frame_type + ")'"]
 
         if self.frame_type == "key":
-            select_args = [
-                "-vf", "select=key"
-            ]
+            select_args = ["-vf", "select=key"]
 
         if self.frame_type is not None:
             ffmpeg_command += select_args
 
-        ffmpeg_command += [
-            "-y",
-            out_path
-        ]
+        ffmpeg_command += ["-y", out_path]
 
         if self.accurate:
             time_seconds = MediaInfo.pretty_to_seconds(time)
@@ -547,49 +656,55 @@ class MediaCapture(object):
             if skip_time_seconds < 0:
                 ffmpeg_command = [
                     "ffmpeg",
-                    "-i", self.path,
-                    "-ss", time,
-                    "-vframes", "1",
-                    "-s", "%sx%s" % (width, height),
+                    "-i",
+                    self.path,
+                    "-ss",
+                    time,
+                    "-vframes",
+                    "1",
+                    "-s",
+                    "%sx%s" % (width, height),
                 ]
 
                 if self.frame_type is not None:
                     ffmpeg_command += select_args
 
-                ffmpeg_command += [
-                    "-y",
-                    out_path
-                ]
+                ffmpeg_command += ["-y", out_path]
             else:
-                skip_time = MediaInfo.pretty_duration(skip_time_seconds, show_millis=True)
+                skip_time = MediaInfo.pretty_duration(
+                    skip_time_seconds, show_millis=True
+                )
                 ffmpeg_command = [
                     "ffmpeg",
-                    "-ss", skip_time,
-                    "-i", self.path,
-                    "-ss", skip_delay,
-                    "-vframes", "1",
-                    "-s", "%sx%s" % (width, height),
+                    "-ss",
+                    skip_time,
+                    "-i",
+                    self.path,
+                    "-ss",
+                    skip_delay,
+                    "-vframes",
+                    "1",
+                    "-s",
+                    "%sx%s" % (width, height),
                 ]
 
                 if self.frame_type is not None:
                     ffmpeg_command += select_args
 
-                ffmpeg_command += [
-                    "-y",
-                    out_path
-                ]
+                ffmpeg_command += ["-y", out_path]
 
         try:
-            subprocess.call(ffmpeg_command, stdin=DEVNULL, stderr=DEVNULL, stdout=DEVNULL)
+            subprocess.call(
+                ffmpeg_command, stdin=DEVNULL, stderr=DEVNULL, stdout=DEVNULL
+            )
         except FileNotFoundError:
             error = "Could not find 'ffmpeg' executable. Please make sure ffmpeg/ffprobe is installed and is in your PATH."
             error_exit(error)
 
     def compute_avg_color(self, image_path):
-        """Computes the average color of an image
-        """
+        """Computes the average color of an image"""
         i = Image.open(image_path)
-        i = i.convert('P')
+        i = i.convert("P")
         p = i.getcolors()
 
         # compute avg color
@@ -604,10 +719,9 @@ class MediaCapture(object):
         return avg_color
 
     def compute_blurriness(self, image_path):
-        """Computes the blurriness of an image. Small value means less blurry.
-        """
+        """Computes the blurriness of an image. Small value means less blurry."""
         i = Image.open(image_path)
-        i = i.convert('L')  # convert to grayscale
+        i = i.convert("L")  # convert to grayscale
 
         a = numpy.asarray(i)
         b = abs(numpy.fft.rfft2(a))
@@ -630,8 +744,7 @@ class MediaCapture(object):
         return numpy.median(matrix_subset)
 
     def max_freq(self, matrix):
-        """Returns the maximum value in the matrix
-        """
+        """Returns the maximum value in the matrix"""
         m = 0
         for row in matrix:
             mx = max(row)
@@ -642,10 +755,11 @@ class MediaCapture(object):
 
 
 def grid_desired_size(
-        grid,
-        media_info,
-        width=Config.contact_sheet_width,
-        horizontal_margin=Config.grid_horizontal_spacing):
+    grid,
+    media_info,
+    width=Config.contact_sheet_width,
+    horizontal_margin=Config.grid_horizontal_spacing,
+):
     """Computes the size of the images placed on a mxn grid with given fixed width.
     Returns (width, height)
     """
@@ -656,10 +770,13 @@ def grid_desired_size(
 
 
 def total_delay_seconds(media_info, args):
-    """Computes the total seconds to skip (beginning + ending).
-    """
-    start_delay_seconds = math.floor(media_info.duration_seconds * args.start_delay_percent / 100)
-    end_delay_seconds = math.floor(media_info.duration_seconds * args.end_delay_percent / 100)
+    """Computes the total seconds to skip (beginning + ending)."""
+    start_delay_seconds = math.floor(
+        media_info.duration_seconds * args.start_delay_percent / 100
+    )
+    end_delay_seconds = math.floor(
+        media_info.duration_seconds * args.end_delay_percent / 100
+    )
     delay = start_delay_seconds + end_delay_seconds
     return delay
 
@@ -674,7 +791,9 @@ def timestamp_generator(media_info, args):
 
     if args.interval is not None:
         capture_interval = int(args.interval.total_seconds())
-    start_delay_seconds = math.floor(media_info.duration_seconds * args.start_delay_percent / 100)
+    start_delay_seconds = math.floor(
+        media_info.duration_seconds * args.start_delay_percent / 100
+    )
     time = start_delay_seconds + capture_interval
 
     for i in range(args.num_samples):
@@ -682,10 +801,7 @@ def timestamp_generator(media_info, args):
         time += capture_interval
 
 
-def select_sharpest_images(
-        media_info,
-        media_capture,
-        args):
+def select_sharpest_images(media_info, media_capture, args):
     """Make `num_samples` captures and select `num_selected` captures out of these
     based on blurriness and color variety.
     """
@@ -694,12 +810,15 @@ def select_sharpest_images(
         args.grid,
         media_info,
         width=args.vcs_width,
-        horizontal_margin=args.grid_horizontal_spacing)
+        horizontal_margin=args.grid_horizontal_spacing,
+    )
 
     if args.manual_timestamps is None:
         timestamps = timestamp_generator(media_info, args)
     else:
-        timestamps = [(MediaInfo.pretty_to_seconds(x), x) for x in args.manual_timestamps]
+        timestamps = [
+            (MediaInfo.pretty_to_seconds(x), x) for x in args.manual_timestamps
+        ]
 
     def do_capture(ts_tuple, width, height, suffix, args):
         fd, filename = tempfile.mkstemp(suffix=suffix)
@@ -718,7 +837,7 @@ def select_sharpest_images(
             filename=filename,
             blurriness=blurriness,
             timestamp=ts_tuple[0],
-            avg_color=avg_color
+            avg_color=avg_color,
         )
         return frm
 
@@ -732,7 +851,14 @@ def select_sharpest_images(
                 status = "Starting task... {}/{}".format(i + 1, args.num_samples)
                 print(status, end="\r")
                 suffix = ".jpg"  # faster processing time
-                future = executor.submit(do_capture, timestamp_tuple, desired_size[0], desired_size[1], suffix, args)
+                future = executor.submit(
+                    do_capture,
+                    timestamp_tuple,
+                    desired_size[0],
+                    desired_size[1],
+                    suffix,
+                    args,
+                )
                 futures.append(future)
             print()
 
@@ -740,9 +866,7 @@ def select_sharpest_images(
                 status = "Sampling... {}/{}".format(i + 1, args.num_samples)
                 print(status, end="\r")
                 frame = future.result()
-                blurs += [
-                    frame
-                ]
+                blurs += [frame]
             print()
     else:
         # grab captures sequentially
@@ -750,11 +874,11 @@ def select_sharpest_images(
             status = "Sampling... {}/{}".format(i + 1, args.num_samples)
             print(status, end="\r")
             suffix = ".bmp"  # lossless
-            frame = do_capture(timestamp_tuple, desired_size[0], desired_size[1], suffix, args)
+            frame = do_capture(
+                timestamp_tuple, desired_size[0], desired_size[1], suffix, args
+            )
 
-            blurs += [
-                frame
-            ]
+            blurs += [frame]
         print()
 
     time_sorted = sorted(blurs, key=lambda x: x.timestamp)
@@ -775,8 +899,7 @@ def select_sharpest_images(
 
 
 def select_color_variety(frames: Iterable[Frame], num_selected):
-    """Select captures so that they are not too similar to each other.
-    """
+    """Select captures so that they are not too similar to each other."""
     avg_color_sorted = sorted(frames, key=lambda x: x.avg_color)
     min_color = avg_color_sorted[0].avg_color
     max_color = avg_color_sorted[-1].avg_color
@@ -793,7 +916,9 @@ def select_color_variety(frames: Iterable[Frame], num_selected):
         if not selected_items:
             selected_items += [frame]
         else:
-            color_distance = min([abs(frame.avg_color - x.avg_color) for x in selected_items])
+            color_distance = min(
+                [abs(frame.avg_color - x.avg_color) for x in selected_items]
+            )
             if color_distance < min_color_distance:
                 # too close to existing selected frame
                 # don't select unless we run out of frames
@@ -810,33 +935,36 @@ def select_color_variety(frames: Iterable[Frame], num_selected):
 
 
 def best(captures: Frame):
-    """Returns the least blurry capture
-    """
+    """Returns the least blurry capture"""
     return sorted(captures, key=lambda x: x.blurriness)[0]
 
 
 def chunks(l, n):
-    """ Yield successive n-sized chunks from l.
-    """
+    """Yield successive n-sized chunks from l."""
     for i in range(0, len(l), n):
-        yield l[i:i + n]
+        yield l[i : i + n]
 
 
 def draw_metadata(
-        draw,
-        args,
-        header_line_height=None,
-        header_lines=None,
-        header_font=None,
-        header_font_color=None,
-        start_height=None):
-    """Draw metadata header
-    """
+    draw,
+    args,
+    header_line_height=None,
+    header_lines=None,
+    header_font=None,
+    header_font_color=None,
+    start_height=None,
+):
+    """Draw metadata header"""
     h = start_height
     h += args.metadata_vertical_margin
 
     for line in header_lines:
-        draw.text((args.metadata_horizontal_margin, h), line, font=header_font, fill=header_font_color)
+        draw.text(
+            (args.metadata_horizontal_margin, h),
+            line,
+            font=header_font,
+            fill=header_font_color,
+        )
         h += header_line_height
 
     h += args.metadata_vertical_margin
@@ -845,13 +973,13 @@ def draw_metadata(
 
 
 def max_line_length(
-        media_info,
-        metadata_font,
-        header_margin,
-        width=Config.contact_sheet_width,
-        text=None):
-    """Find the number of characters that fit in width with given font.
-    """
+    media_info,
+    metadata_font,
+    header_margin,
+    width=Config.contact_sheet_width,
+    text=None,
+):
+    """Find the number of characters that fit in width with given font."""
     if text is None:
         text = media_info.filename
 
@@ -869,9 +997,10 @@ def max_line_length(
     return max_length
 
 
-def prepare_metadata_text_lines(media_info, header_font, header_margin, width, template_path=None):
-    """Prepare the metadata header text and return a list containing each line.
-    """
+def prepare_metadata_text_lines(
+    media_info, header_font, header_margin, width, template_path=None
+):
+    """Prepare the metadata header text and return a list containing each line."""
     template = ""
     if template_path is None:
         template = """{{filename}}
@@ -896,43 +1025,64 @@ def prepare_metadata_text_lines(media_info, header_font, header_margin, width, t
                 header_font,
                 header_margin,
                 width=width,
-                text=remaining_chars)
+                text=remaining_chars,
+            )
             wraps = textwrap.wrap(remaining_chars, max_metadata_line_length)
             header_lines.append(wraps[0])
-            remaining_chars = remaining_chars[len(wraps[0]):].strip()
+            remaining_chars = remaining_chars[len(wraps[0]) :].strip()
 
     return header_lines
 
 
-def compute_timestamp_position(args, w, h, text_size, desired_size, rectangle_hpadding, rectangle_vpadding):
-    """Compute the (x,y) position of the upper left and bottom right points of the rectangle surrounding timestamp text.
-    """
+def compute_timestamp_position(
+    args, w, h, text_size, desired_size, rectangle_hpadding, rectangle_vpadding
+):
+    """Compute the (x,y) position of the upper left and bottom right points of the rectangle surrounding timestamp text."""
     position = args.timestamp_position
 
     x_offset = 0
     if position in [TimestampPosition.west, TimestampPosition.nw, TimestampPosition.sw]:
         x_offset = args.timestamp_horizontal_margin
-    elif position in [TimestampPosition.north, TimestampPosition.center, TimestampPosition.south]:
+    elif position in [
+        TimestampPosition.north,
+        TimestampPosition.center,
+        TimestampPosition.south,
+    ]:
         x_offset = (desired_size[0] / 2) - (text_size[0] / 2) - rectangle_hpadding
     else:
-        x_offset = desired_size[0] - text_size[0] - args.timestamp_horizontal_margin - 2 * rectangle_hpadding
+        x_offset = (
+            desired_size[0]
+            - text_size[0]
+            - args.timestamp_horizontal_margin
+            - 2 * rectangle_hpadding
+        )
 
     y_offset = 0
-    if position in [TimestampPosition.nw, TimestampPosition.north, TimestampPosition.ne]:
+    if position in [
+        TimestampPosition.nw,
+        TimestampPosition.north,
+        TimestampPosition.ne,
+    ]:
         y_offset = args.timestamp_vertical_margin
-    elif position in [TimestampPosition.west, TimestampPosition.center, TimestampPosition.east]:
+    elif position in [
+        TimestampPosition.west,
+        TimestampPosition.center,
+        TimestampPosition.east,
+    ]:
         y_offset = (desired_size[1] / 2) - (text_size[1] / 2) - rectangle_vpadding
     else:
-        y_offset = desired_size[1] - text_size[1] - args.timestamp_vertical_margin - 2 * rectangle_vpadding
+        y_offset = (
+            desired_size[1]
+            - text_size[1]
+            - args.timestamp_vertical_margin
+            - 2 * rectangle_vpadding
+        )
 
-    upper_left = (
-        w + x_offset,
-        h + y_offset
-    )
+    upper_left = (w + x_offset, h + y_offset)
 
     bottom_right = (
         upper_left[0] + text_size[0] + 2 * rectangle_hpadding,
-        upper_left[1] + text_size[1] + 2 * rectangle_vpadding
+        upper_left[1] + text_size[1] + 2 * rectangle_vpadding,
     )
 
     return upper_left, bottom_right
@@ -962,10 +1112,7 @@ def load_font(args, font_path, font_size, default_font_path):
             error_exit("Cannot load font: {}".format(font_path))
 
 
-def compose_contact_sheet(
-        media_info,
-        frames,
-        args):
+def compose_contact_sheet(media_info, frames, args):
     """Creates a video contact sheet with the media information in a header
     and the selected frames arranged on a mxn grid with optional timestamps
     """
@@ -973,19 +1120,31 @@ def compose_contact_sheet(
         args.grid,
         media_info,
         width=args.vcs_width,
-        horizontal_margin=args.grid_horizontal_spacing)
-    width = args.grid.x * (desired_size[0] + args.grid_horizontal_spacing) - args.grid_horizontal_spacing
-    height = args.grid.y * (desired_size[1] + args.grid_vertical_spacing) - args.grid_vertical_spacing
+        horizontal_margin=args.grid_horizontal_spacing,
+    )
+    width = (
+        args.grid.x * (desired_size[0] + args.grid_horizontal_spacing)
+        - args.grid_horizontal_spacing
+    )
+    height = (
+        args.grid.y * (desired_size[1] + args.grid_vertical_spacing)
+        - args.grid_vertical_spacing
+    )
 
-    header_font = load_font(args, args.metadata_font, args.metadata_font_size, Config.metadata_font)
-    timestamp_font = load_font(args, args.timestamp_font, args.timestamp_font_size, Config.timestamp_font)
+    header_font = load_font(
+        args, args.metadata_font, args.metadata_font_size, Config.metadata_font
+    )
+    timestamp_font = load_font(
+        args, args.timestamp_font, args.timestamp_font_size, Config.timestamp_font
+    )
 
     header_lines = prepare_metadata_text_lines(
         media_info,
         header_font,
         args.metadata_horizontal_margin,
         width,
-        template_path=args.metadata_template_path)
+        template_path=args.metadata_template_path,
+    )
 
     line_spacing_coefficient = 1.2
     header_line_height = int(args.metadata_font_size * line_spacing_coefficient)
@@ -998,11 +1157,21 @@ def compose_contact_sheet(
     final_image_height = height + header_height
     transparent = (255, 255, 255, 0)
 
-    image = Image.new("RGBA", (final_image_width, final_image_height), args.background_color)
-    image_capture_layer = Image.new("RGBA", (final_image_width, final_image_height), transparent)
-    image_header_text_layer = Image.new("RGBA", (final_image_width, final_image_height), transparent)
-    image_timestamp_layer = Image.new("RGBA", (final_image_width, final_image_height), transparent)
-    image_timestamp_text_layer = Image.new("RGBA", (final_image_width, final_image_height), transparent)
+    image = Image.new(
+        "RGBA", (final_image_width, final_image_height), args.background_color
+    )
+    image_capture_layer = Image.new(
+        "RGBA", (final_image_width, final_image_height), transparent
+    )
+    image_header_text_layer = Image.new(
+        "RGBA", (final_image_width, final_image_height), transparent
+    )
+    image_timestamp_layer = Image.new(
+        "RGBA", (final_image_width, final_image_height), transparent
+    )
+    image_timestamp_text_layer = Image.new(
+        "RGBA", (final_image_width, final_image_height), transparent
+    )
 
     draw_header_text_layer = ImageDraw.Draw(image_header_text_layer)
     draw_timestamp_layer = ImageDraw.Draw(image_timestamp_layer)
@@ -1010,8 +1179,7 @@ def compose_contact_sheet(
     h = 0
 
     def draw_metadata_helper():
-        """Draw metadata with fixed arguments
-        """
+        """Draw metadata with fixed arguments"""
         return draw_metadata(
             draw_header_text_layer,
             args,
@@ -1019,7 +1187,8 @@ def compose_contact_sheet(
             header_lines=header_lines,
             header_font=header_font,
             header_font_color=args.metadata_font_color,
-            start_height=h)
+            start_height=h,
+        )
 
     # draw metadata
     if args.metadata_position == "top":
@@ -1035,8 +1204,12 @@ def compose_contact_sheet(
 
         # show timestamp
         if args.show_timestamp:
-            timestamp_time = MediaInfo.pretty_duration(frame.timestamp, show_centis=True)
-            timestamp_duration = MediaInfo.pretty_duration(media_info.duration_seconds, show_centis=True)
+            timestamp_time = MediaInfo.pretty_duration(
+                frame.timestamp, show_centis=True
+            )
+            timestamp_duration = MediaInfo.pretty_duration(
+                media_info.duration_seconds, show_centis=True
+            )
             parsed_time = MediaInfo.parse_duration(frame.timestamp)
             parsed_duration = MediaInfo.parse_duration(media_info.duration_seconds)
             timestamp_args = {
@@ -1052,7 +1225,7 @@ def compose_contact_sheet(
                 "dM": str(parsed_duration["minutes"]).zfill(2),
                 "dS": str(parsed_duration["seconds"]).zfill(2),
                 "dc": str(parsed_duration["centis"]).zfill(2),
-                "dm": str(parsed_duration["millis"]).zfill(3)
+                "dm": str(parsed_duration["millis"]).zfill(3),
             }
             timestamp_text = args.timestamp_format.format(**timestamp_args)
             text_bbox = timestamp_font.getbbox(timestamp_text)
@@ -1065,13 +1238,19 @@ def compose_contact_sheet(
             rectangle_hpadding = args.timestamp_horizontal_padding
             rectangle_vpadding = args.timestamp_vertical_padding
 
-            upper_left, bottom_right = compute_timestamp_position(args, w, h, text_size, desired_size,
-                                                                  rectangle_hpadding, rectangle_vpadding)
+            upper_left, bottom_right = compute_timestamp_position(
+                args,
+                w,
+                h,
+                text_size,
+                desired_size,
+                rectangle_hpadding,
+                rectangle_vpadding,
+            )
 
             if not args.timestamp_border_mode:
                 draw_timestamp_layer.rectangle(
-                    [upper_left, bottom_right],
-                    fill=args.timestamp_background_color
+                    [upper_left, bottom_right], fill=args.timestamp_background_color
                 )
             else:
                 offset_factor = args.timestamp_border_size
@@ -1083,36 +1262,38 @@ def compose_contact_sheet(
                     (1, 1),
                     (1, -1),
                     (-1, 1),
-                    (-1, -1)
+                    (-1, -1),
                 ]
 
                 final_offsets = []
                 for offset_counter in range(1, offset_factor + 1):
-                    final_offsets += [(x[0] * offset_counter, x[1] * offset_counter) for x in offsets]
+                    final_offsets += [
+                        (x[0] * offset_counter, x[1] * offset_counter) for x in offsets
+                    ]
 
                 for offset in final_offsets:
                     # draw border first
                     draw_timestamp_text_layer.text(
                         (
                             upper_left[0] + rectangle_hpadding + offset[0],
-                            upper_left[1] + rectangle_vpadding + offset[1]
+                            upper_left[1] + rectangle_vpadding + offset[1],
                         ),
                         timestamp_text,
                         font=timestamp_font,
                         fill=args.timestamp_border_color,
-                        anchor="lt"
+                        anchor="lt",
                     )
 
             # draw timestamp
             draw_timestamp_text_layer.text(
                 (
                     upper_left[0] + rectangle_hpadding,
-                    upper_left[1] + rectangle_vpadding
+                    upper_left[1] + rectangle_vpadding,
                 ),
                 timestamp_text,
                 font=timestamp_font,
                 fill=args.timestamp_font_color,
-                anchor="lt"
+                anchor="lt",
             )
 
         # update x position for next frame
@@ -1141,8 +1322,7 @@ def compose_contact_sheet(
 
 
 def save_image(args, image, media_info, output_path):
-    """Save the image to `output_path`
-    """
+    """Save the image to `output_path`"""
     image = image.convert("RGB")
     try:
         image.save(output_path, optimize=True, quality=args.image_quality)
@@ -1152,8 +1332,7 @@ def save_image(args, image, media_info, output_path):
 
 
 def cleanup(frames, args):
-    """Delete temporary captures
-    """
+    """Delete temporary captures"""
     if args.is_verbose:
         print("Deleting {} temporary frames...".format(len(frames)))
     for frame in frames:
@@ -1168,8 +1347,7 @@ def cleanup(frames, args):
 
 
 def print_template_attributes():
-    """Display all the available template attributes in a tabular format
-    """
+    """Display all the available template attributes in a tabular format"""
     table = MediaInfo.list_template_attributes()
 
     tab = texttable.Texttable()
@@ -1186,11 +1364,11 @@ def mxn_type(string):
     """
     try:
         split = string.split("x")
-        assert (len(split) == 2)
+        assert len(split) == 2
         m = int(split[0])
-        assert (m >= 0)
+        assert m >= 0
         n = int(split[1])
-        assert (n >= 0)
+        assert n >= 0
         return Grid(m, n)
     except (IndexError, ValueError, AssertionError):
         error = "Grid must be of the form mxn, where m is the number of columns and n is the number of rows."
@@ -1207,7 +1385,11 @@ def metadata_position_type(string):
     if lowercase_position in valid_metadata_positions:
         return lowercase_position
     else:
-        error = 'Metadata header position must be one of %s' % (str(valid_metadata_positions, ))
+        error = "Metadata header position must be one of %s" % (
+            str(
+                valid_metadata_positions,
+            )
+        )
         raise argparse.ArgumentTypeError(error)
 
 
@@ -1251,7 +1433,10 @@ def timestamp_position_type(string):
     try:
         return getattr(TimestampPosition, string)
     except AttributeError:
-        error = "Invalid timestamp position: %s. Valid positions are: %s" % (string, VALID_TIMESTAMP_POSITIONS)
+        error = "Invalid timestamp position: %s. Valid positions are: %s" % (
+            string,
+            VALID_TIMESTAMP_POSITIONS,
+        )
         raise argparse.ArgumentTypeError(error)
 
 
@@ -1293,8 +1478,7 @@ def error_exit(message):
 
 
 def main():
-    """Program entry point
-    """
+    """Program entry point"""
     # Argument parser before actual argument parser to let the user overwrite the config path
     preargparser = argparse.ArgumentParser(add_help=False)
     preargparser.add_argument("-c", "--config", dest="configfile", default=None)
@@ -1314,308 +1498,368 @@ def main():
     except configparser.MissingSectionHeaderError as e:
         error_exit(e.message)
 
-    parser = argparse.ArgumentParser(description="Create a video contact sheet",
-                                     formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description="Create a video contact sheet",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("filenames", nargs="+")
     parser.add_argument(
-        "-o", "--output",
-        help="save to output file",
-        dest="output_path")
+        "-o", "--output", help="save to output file", dest="output_path"
+    )
     # adding --config to the main parser to display it when the user asks for help
     # the value is not important anymore
     parser.add_argument(
-        "-c", "--config",
+        "-c",
+        "--config",
         help="Config file to load defaults from",
-        default=DEFAULT_CONFIG_FILE
+        default=DEFAULT_CONFIG_FILE,
     )
     parser.add_argument(
         "--start-delay-percent",
         help="do not capture frames in the first n percent of total time",
         dest="start_delay_percent",
         type=int,
-        default=Config.start_delay_percent)
+        default=Config.start_delay_percent,
+    )
     parser.add_argument(
         "--end-delay-percent",
         help="do not capture frames in the last n percent of total time",
         dest="end_delay_percent",
         type=int,
-        default=Config.end_delay_percent)
+        default=Config.end_delay_percent,
+    )
     parser.add_argument(
         "--delay-percent",
         help="do not capture frames in the first and last n percent of total time",
         dest="delay_percent",
         type=int,
-        default=Config.delay_percent)
+        default=Config.delay_percent,
+    )
     parser.add_argument(
         "--grid-spacing",
         help="number of pixels spacing captures both vertically and horizontally",
         dest="grid_spacing",
         type=int,
-        default=Config.grid_spacing)
+        default=Config.grid_spacing,
+    )
     parser.add_argument(
         "--grid-horizontal-spacing",
         help="number of pixels spacing captures horizontally",
         dest="grid_horizontal_spacing",
         type=int,
-        default=Config.grid_horizontal_spacing)
+        default=Config.grid_horizontal_spacing,
+    )
     parser.add_argument(
         "--grid-vertical-spacing",
         help="number of pixels spacing captures vertically",
         dest="grid_vertical_spacing",
         type=int,
-        default=Config.grid_vertical_spacing)
+        default=Config.grid_vertical_spacing,
+    )
     parser.add_argument(
-        "-w", "--width",
+        "-w",
+        "--width",
         help="width of the generated contact sheet",
         dest="vcs_width",
         type=int,
-        default=Config.contact_sheet_width)
+        default=Config.contact_sheet_width,
+    )
     parser.add_argument(
-        "-g", "--grid",
+        "-g",
+        "--grid",
         help="display frames on a mxn grid (for example 4x5). The special value zero (as in 2x0 or 0x5 or 0x0) is only allowed when combined with --interval or with --manual. Zero means that the component should be automatically deduced based on other arguments passed.",
         dest="grid",
         type=mxn_type,
-        default=Config.grid_size)
+        default=Config.grid_size,
+    )
     parser.add_argument(
-        "-s", "--num-samples",
+        "-s",
+        "--num-samples",
         help="number of samples",
         dest="num_samples",
         type=int,
-        default=None)
+        default=None,
+    )
     parser.add_argument(
-        "-t", "--show-timestamp",
+        "-t",
+        "--show-timestamp",
         action="store_true",
         help="display timestamp for each frame",
-        dest="show_timestamp")
+        dest="show_timestamp",
+    )
     parser.add_argument(
         "--metadata-font-size",
         help="size of the font used for metadata",
         dest="metadata_font_size",
         type=int,
-        default=Config.metadata_font_size)
+        default=Config.metadata_font_size,
+    )
     parser.add_argument(
         "--metadata-font",
         help="TTF font used for metadata",
         dest="metadata_font",
-        default=Config.metadata_font)
+        default=Config.metadata_font,
+    )
     parser.add_argument(
         "--timestamp-font-size",
         help="size of the font used for timestamps",
         dest="timestamp_font_size",
         type=int,
-        default=Config.timestamp_font_size)
+        default=Config.timestamp_font_size,
+    )
     parser.add_argument(
         "--timestamp-font",
         help="TTF font used for timestamps",
         dest="timestamp_font",
-        default=Config.timestamp_font)
+        default=Config.timestamp_font,
+    )
     parser.add_argument(
         "--metadata-position",
         help="Position of the metadata header. Must be one of ['top', 'bottom', 'hidden']",
         dest="metadata_position",
         type=metadata_position_type,
-        default=Config.metadata_position)
+        default=Config.metadata_position,
+    )
     parser.add_argument(
         "--background-color",
         help="Color of the background in hexadecimal, for example AABBCC",
         dest="background_color",
         type=hex_color_type,
-        default=hex_color_type(Config.background_color))
+        default=hex_color_type(Config.background_color),
+    )
     parser.add_argument(
         "--metadata-font-color",
         help="Color of the metadata font in hexadecimal, for example AABBCC",
         dest="metadata_font_color",
         type=hex_color_type,
-        default=hex_color_type(Config.metadata_font_color))
+        default=hex_color_type(Config.metadata_font_color),
+    )
     parser.add_argument(
         "--timestamp-font-color",
         help="Color of the timestamp font in hexadecimal, for example AABBCC",
         dest="timestamp_font_color",
         type=hex_color_type,
-        default=hex_color_type(Config.timestamp_font_color))
+        default=hex_color_type(Config.timestamp_font_color),
+    )
     parser.add_argument(
         "--timestamp-background-color",
         help="Color of the timestamp background rectangle in hexadecimal, for example AABBCC",
         dest="timestamp_background_color",
         type=hex_color_type,
-        default=hex_color_type(Config.timestamp_background_color))
+        default=hex_color_type(Config.timestamp_background_color),
+    )
     parser.add_argument(
         "--timestamp-border-color",
         help="Color of the timestamp border in hexadecimal, for example AABBCC",
         dest="timestamp_border_color",
         type=hex_color_type,
-        default=hex_color_type(Config.timestamp_border_color))
+        default=hex_color_type(Config.timestamp_border_color),
+    )
     parser.add_argument(
         "--template",
         help="Path to metadata template file",
         dest="metadata_template_path",
-        default=None)
+        default=None,
+    )
     parser.add_argument(
-        "-m", "--manual",
+        "-m",
+        "--manual",
         help="Comma-separated list of frame timestamps to use, for example 1:11:11.111,2:22:22.222",
         dest="manual_timestamps",
         type=manual_timestamps,
-        default=None)
+        default=None,
+    )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="display verbose messages",
-        dest="is_verbose")
+        dest="is_verbose",
+    )
     parser.add_argument(
-        "-a", "--accurate",
+        "-a",
+        "--accurate",
         action="store_true",
         help="""Make accurate captures. This capture mode is way slower than the default one
         but it helps when capturing frames from HEVC videos.""",
-        dest="is_accurate")
+        dest="is_accurate",
+    )
     parser.add_argument(
-        "-A", "--accurate-delay-seconds",
+        "-A",
+        "--accurate-delay-seconds",
         type=int,
         default=Config.accurate_delay_seconds,
         help="""Fast skip to N seconds before capture time, then do accurate capture
         (decodes N seconds of video before each capture). This is used with accurate capture mode only.""",
-        dest="accurate_delay_seconds")
+        dest="accurate_delay_seconds",
+    )
     parser.add_argument(
         "--metadata-margin",
         type=int,
         default=Config.metadata_margin,
         help="Margin (in pixels) in the metadata header.",
-        dest="metadata_margin")
+        dest="metadata_margin",
+    )
     parser.add_argument(
         "--metadata-horizontal-margin",
         type=int,
         default=Config.metadata_horizontal_margin,
         help="Horizontal margin (in pixels) in the metadata header.",
-        dest="metadata_horizontal_margin")
+        dest="metadata_horizontal_margin",
+    )
     parser.add_argument(
         "--metadata-vertical-margin",
         type=int,
         default=Config.metadata_vertical_margin,
         help="Vertical margin (in pixels) in the metadata header.",
-        dest="metadata_vertical_margin")
+        dest="metadata_vertical_margin",
+    )
     parser.add_argument(
         "--timestamp-horizontal-padding",
         type=int,
         default=Config.timestamp_horizontal_padding,
         help="Horizontal padding (in pixels) for timestamps.",
-        dest="timestamp_horizontal_padding")
+        dest="timestamp_horizontal_padding",
+    )
     parser.add_argument(
         "--timestamp-vertical-padding",
         type=int,
         default=Config.timestamp_vertical_padding,
         help="Vertical padding (in pixels) for timestamps.",
-        dest="timestamp_vertical_padding")
+        dest="timestamp_vertical_padding",
+    )
     parser.add_argument(
         "--timestamp-horizontal-margin",
         type=int,
         default=Config.timestamp_horizontal_margin,
         help="Horizontal margin (in pixels) for timestamps.",
-        dest="timestamp_horizontal_margin")
+        dest="timestamp_horizontal_margin",
+    )
     parser.add_argument(
         "--timestamp-vertical-margin",
         type=int,
         default=Config.timestamp_vertical_margin,
         help="Vertical margin (in pixels) for timestamps.",
-        dest="timestamp_vertical_margin")
+        dest="timestamp_vertical_margin",
+    )
     parser.add_argument(
         "--quality",
         type=int,
         default=Config.quality,
         help="Output image quality. Must be an integer in the range 0-100. 100 = best quality.",
-        dest="image_quality")
+        dest="image_quality",
+    )
     parser.add_argument(
-        "-f", "--format",
+        "-f",
+        "--format",
         type=str,
         default=Config.format,
         help="Output image format. Can be any format supported by pillow. For example 'png' or 'jpg'.",
-        dest="image_format")
+        dest="image_format",
+    )
     parser.add_argument(
-        "-T", "--timestamp-position",
+        "-T",
+        "--timestamp-position",
         type=timestamp_position_type,
         default=Config.timestamp_position,
         help="Timestamp position. Must be one of %s." % (VALID_TIMESTAMP_POSITIONS,),
-        dest="timestamp_position")
+        dest="timestamp_position",
+    )
     parser.add_argument(
-        "-r", "--recursive",
+        "-r",
+        "--recursive",
         action="store_true",
         help="Process every file in the specified directory recursively.",
-        dest="recursive")
+        dest="recursive",
+    )
     parser.add_argument(
         "--timestamp-border-mode",
         action="store_true",
         help="Draw timestamp text with a border instead of the default rectangle.",
-        dest="timestamp_border_mode")
+        dest="timestamp_border_mode",
+    )
     parser.add_argument(
         "--timestamp-border-size",
         type=int,
         default=Config.timestamp_border_size,
         help="Size of the timestamp border in pixels (used only with --timestamp-border-mode).",
-        dest="timestamp_border_size")
+        dest="timestamp_border_size",
+    )
     parser.add_argument(
         "--capture-alpha",
         type=int,
         default=Config.capture_alpha,
         help="Alpha channel value for the captures (transparency in range [0, 255]). Defaults to 255 (opaque)",
-        dest="capture_alpha")
+        dest="capture_alpha",
+    )
     parser.add_argument(
         "--version",
         action="version",
-        version="%(prog)s version {version}".format(version=__version__))
+        version="%(prog)s version {version}".format(version=__version__),
+    )
     parser.add_argument(
         "--list-template-attributes",
         action="store_true",
-        dest="list_template_attributes")
+        dest="list_template_attributes",
+    )
     parser.add_argument(
         "--frame-type",
         type=str,
         default=DEFAULT_FRAME_TYPE,
         help="Frame type passed to ffmpeg 'select=eq(pict_type,FRAME_TYPE)' filter. Should be one of ('I', 'B', 'P') or the special type 'key' which will use the 'select=key' filter instead.",
-        dest="frame_type")
+        dest="frame_type",
+    )
     parser.add_argument(
         "--interval",
         type=interval_type,
         default=Config.interval,
         help="Capture frames at specified interval. Interval format is any string supported by `parsedatetime`. For example '5m', '3 minutes 5 seconds', '1 hour 15 min and 20 sec' etc.",
-        dest="interval")
+        dest="interval",
+    )
     parser.add_argument(
         "--ignore-errors",
         action="store_true",
         help="Ignore any error encountered while processing files recursively and continue to the next file.",
-        dest="ignore_errors")
+        dest="ignore_errors",
+    )
     parser.add_argument(
         "--no-overwrite",
         action="store_true",
         help="Do not overwrite output file if it already exists, simply ignore this file and continue processing other unprocessed files.",
-        dest="no_overwrite"
+        dest="no_overwrite",
     )
     parser.add_argument(
         "--exclude-extensions",
         type=comma_separated_string_type,
         default=[],
         help="Do not process files that end with the given extensions.",
-        dest="exclude_extensions"
+        dest="exclude_extensions",
     )
     parser.add_argument(
         "--fast",
         action="store_true",
         help="Fast mode. Just make a contact sheet as fast as possible, regardless of output image quality. May mess up the terminal.",
-        dest="fast")
-    parser.add_argument(
-        "-O", "--thumbnail-output",
-        help="Save thumbnail files to the specified output directory. If set, the thumbnail files will not be deleted after successful creation of the contact sheet.",
-        default=None,
-        dest="thumbnail_output_path"
+        dest="fast",
     )
     parser.add_argument(
-        "-S", "--actual-size",
+        "-O",
+        "--thumbnail-output",
+        help="Save thumbnail files to the specified output directory. If set, the thumbnail files will not be deleted after successful creation of the contact sheet.",
+        default=None,
+        dest="thumbnail_output_path",
+    )
+    parser.add_argument(
+        "-S",
+        "--actual-size",
         help="Make thumbnails of actual size. In other words, thumbnails will have the actual 1:1 size of the video resolution.",
         action="store_true",
-        dest="actual_size"
+        dest="actual_size",
     )
     parser.add_argument(
         "--timestamp-format",
         help="Use specified timestamp format. Replaced values include: {TIME}, {DURATION}, {THUMBNAIL_NUMBER}, {H} (hours), {M} (minutes), {S} (seconds), {c} (centiseconds), {m} (milliseconds), {dH}, {dM}, {dS}, {dc} and {dm} (same as previous values but for the total duration). Example format: '{TIME} / {DURATION}'. Another example: '{THUMBNAIL_NUMBER}'. Yet another example: '{H}:{M}:{S}.{m} / {dH}:{dM}:{dS}.{dm}'.",
         default="{TIME}",
-        dest="timestamp_format"
+        dest="timestamp_format",
     )
 
     args = parser.parse_args()
@@ -1631,7 +1875,10 @@ def main():
             if not args.ignore_errors:
                 raise
             else:
-                print("[WARN]: failed to process {} ... skipping.".format(filepath), file=sys.stderr)
+                print(
+                    "[WARN]: failed to process {} ... skipping.".format(filepath),
+                    file=sys.stderr,
+                )
 
     if args.recursive:
         for path in args.filenames:
@@ -1656,8 +1903,7 @@ def main():
 
 
 def process_file(path, args):
-    """Generate a video contact sheet for the file at given path
-    """
+    """Generate a video contact sheet for the file at given path"""
     if args.is_verbose:
         print("Considering {}...".format(path))
 
@@ -1694,11 +1940,15 @@ def process_file(path, args):
                 url_path = "out"
             output_path = f"{url_path}.{args.image_format}"
     elif os.path.isdir(output_path):
-        output_path = os.path.join(output_path, os.path.basename(path) + "." + args.image_format)
+        output_path = os.path.join(
+            output_path, os.path.basename(path) + "." + args.image_format
+        )
 
     if args.no_overwrite:
         if os.path.exists(output_path):
-            print("[INFO] contact-sheet already exists, skipping: {}".format(output_path))
+            print(
+                "[INFO] contact-sheet already exists, skipping: {}".format(output_path)
+            )
             return
 
     print("Processing {}...".format(path))
@@ -1715,14 +1965,12 @@ def process_file(path, args):
 
     args.num_groups = 5
 
-    media_info = MediaInfo(
-        path,
-        verbose=args.is_verbose)
+    media_info = MediaInfo(path, verbose=args.is_verbose)
     media_capture = MediaCapture(
         path,
         accurate=args.is_accurate,
         skip_delay_seconds=args.accurate_delay_seconds,
-        frame_type=args.frame_type
+        frame_type=args.frame_type,
     )
 
     # metadata margins
@@ -1730,8 +1978,14 @@ def process_file(path, args):
         args.metadata_horizontal_margin = args.metadata_margin
         args.metadata_vertical_margin = args.metadata_margin
 
-    if args.interval is None and args.manual_timestamps is None and (args.grid.x == 0 or args.grid.y == 0):
-        error = "Row or column of size zero is only supported with --interval or --manual."
+    if (
+        args.interval is None
+        and args.manual_timestamps is None
+        and (args.grid.x == 0 or args.grid.y == 0)
+    ):
+        error = (
+            "Row or column of size zero is only supported with --interval or --manual."
+        )
         error_exit(error)
 
     if args.interval is not None:
@@ -1794,7 +2048,9 @@ def process_file(path, args):
         width = media_info.display_width
         args.vcs_width = x * width + (x - 1) * args.grid_horizontal_spacing
 
-    selected_frames, temp_frames = select_sharpest_images(media_info, media_capture, args)
+    selected_frames, temp_frames = select_sharpest_images(
+        media_info, media_capture, args
+    )
 
     print("Composing contact sheet...")
     image = compose_contact_sheet(media_info, selected_frames, args)
@@ -1806,13 +2062,19 @@ def process_file(path, args):
     if thumbnail_output_path is not None:
         os.makedirs(thumbnail_output_path, exist_ok=True)
         print("Copying thumbnails to {} ...".format(thumbnail_output_path))
-        for i, frame in enumerate(sorted(selected_frames, key=lambda x_frame: x_frame.timestamp)):
+        for i, frame in enumerate(
+            sorted(selected_frames, key=lambda x_frame: x_frame.timestamp)
+        ):
             print(frame.filename)
             thumbnail_file_extension = frame.filename.lower().split(".")[-1]
-            thumbnail_filename = "{filename}.{number}.{extension}".format(filename=os.path.basename(path),
-                                                                          number=str(i).zfill(4),
-                                                                          extension=thumbnail_file_extension)
-            thumbnail_destination = os.path.join(thumbnail_output_path, thumbnail_filename)
+            thumbnail_filename = "{filename}.{number}.{extension}".format(
+                filename=os.path.basename(path),
+                number=str(i).zfill(4),
+                extension=thumbnail_file_extension,
+            )
+            thumbnail_destination = os.path.join(
+                thumbnail_output_path, thumbnail_filename
+            )
             shutil.copyfile(frame.filename, thumbnail_destination)
 
     print("Cleaning up temporary files...")
